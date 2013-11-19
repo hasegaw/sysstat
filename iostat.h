@@ -90,6 +90,14 @@ struct io_stats {
 	unsigned int  tot_ticks		__attribute__ ((packed));
 	/* # of ticks requests spent in queue */
 	unsigned int  rq_ticks		__attribute__ ((packed));
+
+	unsigned int  is_fusionio	__attribute__ ((packed));
+	unsigned int  total_lebs	__attribute__ ((packed));
+	unsigned int  free_lebs		__attribute__ ((packed));
+	unsigned int  used_lebs		__attribute__ ((packed));
+	unsigned int  scanner_active_eb	__attribute__ ((packed));
+	unsigned int  groomer_active_eb	__attribute__ ((packed));
+	char          groomer_state[20];
 };
 
 #define IO_STATS_SIZE	(sizeof(struct io_stats))

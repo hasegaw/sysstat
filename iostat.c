@@ -471,6 +471,85 @@ void save_stats(char *name, int curr, void *st_io, int iodev_nr,
 	 */
 }
 
+
+/*
+ ***************************************************************************
+ * Fusion-io device support
+ ***************************************************************************
+ */
+
+int fio_read_proc_int(char *filename, unsigned int *val)
+{
+	FILE *fp;
+	int ret;
+
+	if ((fp = fopen(filename, "r")) == NULL)
+		return 0;
+
+	ret = (fscanf(fp,"%u", val) == 1);
+	fclose(fp);
+
+	return ret;
+}
+
+int fio_read_proc_str(char *filename, char *s, int len)
+{
+	FILE *fp;
+	int ret;
+	int len_;
+
+	if ((fp = fopen(filename, "r")) == NULL)
+		return 0;
+
+	ret = (fgets(s, len, fp) != NULL);
+	fclose(fp);
+
+	/* remove \n from the string */
+	if (ret && (len_ = strlen(s)))
+		s[len_ - 1] = 0;
+
+	return ret;
+}
+
+void fio_block_stat(char* dev_name, struct io_stats* sdev)
+{
+	char filename[256];
+
+	sdev->is_fusionio = strncmp(dev_name, "fio", 3) == 0;
+	if (!sdev->is_fusionio)
+		return;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/free_lebs", dev_name);	
+	if (! fio_read_proc_int(filename, &sdev->free_lebs))
+		goto exit_abort;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/total_lebs", dev_name);	
+	if (! fio_read_proc_int(filename, &sdev->total_lebs))
+		goto exit_abort;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/used_lebs", dev_name);	
+	if (! fio_read_proc_int(filename, &sdev->used_lebs))
+		goto exit_abort;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/groomer/active-eb", dev_name);	
+	if (! fio_read_proc_int(filename, &sdev->groomer_active_eb))
+		goto exit_abort;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/scanner/active-eb", dev_name);	
+	if (! fio_read_proc_int(filename, &sdev->scanner_active_eb))
+		goto exit_abort;
+
+	snprintf(filename, sizeof(filename), "/proc/fusion/fio/%s/data/groomer/state", dev_name);	
+	if (! fio_read_proc_str(filename, (char*)&sdev->groomer_state, sizeof(sdev->groomer_state)))
+		goto exit_abort;
+
+	return;
+
+exit_abort:
+	sdev->is_fusionio = 0;
+	sdev->free_lebs = sdev->total_lebs = sdev->used_lebs = 0;
+}		
+
 /*
  ***************************************************************************
  * Read sysfs stat for current block device or partition.
@@ -523,6 +602,9 @@ int read_sysfs_file_stat(int curr, char *filename, char *dev_name)
 		sdev.wr_sectors = rd_ticks_or_wr_sec;
 	}
 	
+	/* TEST ME: Fusion-io support */
+	fio_block_stat(dev_name, &sdev);
+
 	if ((i == 11) || !DISPLAY_EXTENDED(flags)) {
 		/*
 		 * In fact, we _don't_ save stats if it's a partition without
@@ -755,6 +837,8 @@ void read_diskstats_stat(int curr)
 			}
 		}
 
+		fio_block_stat(dev_name, &sdev);
+
 		save_stats(dev_name, curr, &sdev, iodev_nr, st_hdr_iodev);
 	}
 	fclose(fp);
@@ -867,7 +951,13 @@ void write_disk_stat_header(int *fctr)
 		else {
 			printf("   rsec/s   wsec/s");
 		}
-		printf(" avgrq-sz avgqu-sz   await r_await w_await  svctm  %%util\n");
+		printf(" avgrq-sz avgqu-sz   await r_await w_await  svctm  %%util");
+
+		/* Fusion-io stats */
+		printf("  ttl  used free");
+		printf(" scan# grmr# groomer");
+
+		printf("\n");
 	}
 	else {
 		/* Basic stats */
@@ -957,7 +1047,7 @@ void write_ext_stat(int curr, unsigned long long itv, int fctr,
 	}
 
 	/*       rrq/s wrq/s   r/s   w/s  rsec  wsec  rqsz  qusz await r_await w_await svctm %util */
-	printf(" %8.2f %8.2f %7.2f %7.2f %8.2f %8.2f %8.2f %8.2f %7.2f %7.2f %7.2f %6.2f %6.2f\n",
+	printf(" %8.2f %8.2f %7.2f %7.2f %8.2f %8.2f %8.2f %8.2f %7.2f %7.2f %7.2f %6.2f %6.2f",
 	       S_VALUE(ioj->rd_merges, ioi->rd_merges, itv),
 	       S_VALUE(ioj->wr_merges, ioi->wr_merges, itv),
 	       S_VALUE(ioj->rd_ios, ioi->rd_ios, itv),
@@ -978,6 +1068,12 @@ void write_ext_stat(int curr, unsigned long long itv, int fctr,
 		*/
 	       shi->used ? xds.util / 10.0 / (double) shi->used
 	                 : xds.util / 10.0);	/* shi->used should never be null here */
+
+	if (ioi->is_fusionio) {
+		printf("  %4.4d %4.4d %4.4d", ioi->total_lebs, ioi->used_lebs, ioi->free_lebs);
+                printf(" %5.5d %5.5d %s", ioi->scanner_active_eb, ioi->groomer_active_eb, ioi->groomer_state);
+	}
+	printf("\n");
 }
 
 /*
